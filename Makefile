@@ -1,7 +1,7 @@
 .PHONY: build test vet run
 
 build:
-	go build -o bin/taillow ./cmd/taillow
+	go build -trimpath -o bin/taillow ./cmd/taillow
 
 test:
 	go test ./...
