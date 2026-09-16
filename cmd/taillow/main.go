@@ -1,12 +1,13 @@
 // Command taillow is an LLM gateway that joins a tailnet as its own node.
 //
-// Milestone 1: join the tailnet and answer GET /healthz. Nothing listens on
-// the host's network interfaces. The tailnet listener is the only way in.
+// Milestone 2 adds GET /whoami, which reports who the tailnet says is calling
+// and what the tailnet policy grants them.
 package main
 
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -16,6 +17,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/13inks/taillow/internal/grant"
+	"github.com/13inks/taillow/internal/ident"
 	"tailscale.com/tsnet"
 )
 
@@ -71,8 +74,13 @@ func run(cfg config) error {
 		return fmt.Errorf("listening on tailnet address %s: %w", cfg.addr, err)
 	}
 
+	lc, err := srv.LocalClient()
+	if err != nil {
+		return fmt.Errorf("getting the tailnet local client: %w", err)
+	}
+
 	httpSrv := &http.Server{
-		Handler:           newMux(),
+		Handler:           newMux(lc),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	serveErr := make(chan error, 1)
@@ -93,14 +101,83 @@ func run(cfg config) error {
 
 // newMux builds the routes. The method in each pattern makes the standard
 // library answer other methods with 405 and an Allow header.
-func newMux() *http.ServeMux {
+func newMux(who ident.WhoIser) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", healthz)
+	mux.HandleFunc("GET /whoami", func(w http.ResponseWriter, r *http.Request) {
+		whoamiHandler(w, r, who)
+	})
 	return mux
 }
 
 // healthz reports that the process is up and serving.
 func healthz(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// refusal is the body of every 4xx and 5xx. Reason is always set: a refusal
+// that does not say why is as hard to debug as a silent success.
+type refusal struct {
+	Status int           `json:"status"`
+	Reason string        `json:"reason"`
+	Caller *ident.Caller `json:"caller,omitempty"`
+}
+
+type whoamiResponse struct {
+	Caller ident.Caller `json:"caller"`
+	Grant  grant.Grant  `json:"grant"`
+}
+
+func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	w.WriteHeader(status)
+	if err := json.NewEncoder(w).Encode(v); err != nil {
+		log.Printf("writing JSON response: %v", err)
+	}
+}
+
+// whoamiHandler reports the caller's identity and grant, or refuses with a
+// reason. The caller is echoed on a grant refusal because it is their own
+// identity, and knowing who the tailnet thinks they are is how they fix it.
+func whoamiHandler(w http.ResponseWriter, r *http.Request, who ident.WhoIser) {
+	caller, caps, err := ident.Resolve(r.Context(), who, r.RemoteAddr)
+	if err != nil {
+		// errors.Is, not ==: Resolve wraps ErrUnknownCaller with the address.
+		if errors.Is(err, ident.ErrUnknownCaller) {
+			writeJSON(w, http.StatusForbidden, refusal{
+				Status: http.StatusForbidden,
+				Reason: "caller identity not resolvable on this tailnet",
+			})
+			return
+		}
+		log.Printf("whoami: identity lookup failed for %s: %v", r.RemoteAddr, err)
+		writeJSON(w, http.StatusServiceUnavailable, refusal{
+			Status: http.StatusServiceUnavailable,
+			Reason: "identity lookup failed; refusing rather than guessing",
+		})
+		return
+	}
+
+	g, err := grant.FromCapMap(caps)
+	if err != nil {
+		if errors.Is(err, grant.ErrNoGrant) {
+			writeJSON(w, http.StatusForbidden, refusal{
+				Status: http.StatusForbidden,
+				Reason: "no grant for this app: the tailnet policy gives this caller no " + string(grant.Capability) + " capability",
+				Caller: &caller,
+			})
+			return
+		}
+		writeJSON(w, http.StatusForbidden, refusal{
+			Status: http.StatusForbidden,
+			Reason: err.Error(),
+			Caller: &caller,
+		})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, whoamiResponse{
+		Caller: caller,
+		Grant:  g,
+	})
 }
