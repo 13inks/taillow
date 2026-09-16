@@ -1,0 +1,5 @@
+# Tailnet node state (holds the node key). Never commit it.
+.tsnet-state/
+# Secrets live in the environment only.
+.env
+/bin/
