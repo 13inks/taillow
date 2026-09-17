@@ -49,7 +49,7 @@ func TestRoutes(t *testing.T) {
 		{"unknown path is 404", http.MethodGet, "/nope", http.StatusNotFound, "", ""},
 	}
 
-	mux := newMux(fakeWhoIs{})
+	mux := newMux(&gateway{who: fakeWhoIs{}})
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			rec := httptest.NewRecorder()
@@ -209,7 +209,7 @@ func TestWhoami(t *testing.T) {
 		},
 	}
 
-	mux := newMux(who)
+	mux := newMux(&gateway{who: who})
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, "/whoami", nil)
