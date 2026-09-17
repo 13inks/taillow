@@ -3,3 +3,5 @@
 # Secrets live in the environment only.
 .env
 /bin/
+# The audit log names who asked for what. It stays on the machine that wrote it.
+*.jsonl
