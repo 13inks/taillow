@@ -9,8 +9,8 @@ import (
 	"errors"
 	"fmt"
 	"slices"
-	"strings"
 
+	"github.com/13inks/taillow/internal/strictjson"
 	"tailscale.com/tailcfg"
 )
 
@@ -53,30 +53,15 @@ func FromCapMap(cm tailcfg.PeerCapMap) (Grant, error) {
 
 	var merged Grant
 	for i, val := range raw {
-		var fields map[string]json.RawMessage
-		if err := json.Unmarshal([]byte(val), &fields); err != nil || fields == nil {
-			return Grant{}, &InvalidError{Index: i, Reason: "must be a JSON object"}
-		}
-
-		// Check for unknown keys first.
-		var unknownKeys []string
-		for k := range fields {
-			switch k {
-			case "models", "dailyTokens":
-				continue
-			default:
-				unknownKeys = append(unknownKeys, k)
+		// Exact keys, no repeats: strictjson explains why encoding/json alone
+		// is too forgiving for a permission check.
+		fields, err := strictjson.Object([]byte(val), "models", "dailyTokens")
+		if err != nil {
+			var fe *strictjson.FieldError
+			if errors.As(err, &fe) {
+				return Grant{}, &InvalidError{Index: i, Field: fe.Field, Reason: fe.Reason}
 			}
-		}
-		if len(unknownKeys) > 0 {
-			slices.Sort(unknownKeys)
-			return Grant{}, &InvalidError{Index: i, Field: unknownKeys[0], Reason: "unknown field"}
-		}
-
-		// encoding/json keeps the last of two identical keys, so
-		// {"dailyTokens":1,"dailyTokens":999} would quietly grant 999.
-		if dup := duplicateKey(val); dup != "" {
-			return Grant{}, &InvalidError{Index: i, Field: dup, Reason: "duplicate field"}
+			return Grant{}, &InvalidError{Index: i, Reason: err.Error()}
 		}
 
 		// Validate "models".
@@ -123,31 +108,4 @@ func FromCapMap(cm tailcfg.PeerCapMap) (Grant, error) {
 	merged.Models = slices.Compact(merged.Models)
 
 	return merged, nil
-}
-
-// duplicateKey returns the first top-level key that appears twice in obj, or
-// "" when every key is unique. obj has already decoded as a JSON object, so
-// the token walk cannot fail on well-formed input.
-func duplicateKey(obj tailcfg.RawMessage) string {
-	dec := json.NewDecoder(strings.NewReader(string(obj)))
-	if _, err := dec.Token(); err != nil { // the opening brace
-		return ""
-	}
-	seen := make(map[string]bool)
-	for dec.More() {
-		tok, err := dec.Token()
-		if err != nil {
-			return ""
-		}
-		key, _ := tok.(string)
-		if seen[key] {
-			return key
-		}
-		seen[key] = true
-		var skip json.RawMessage
-		if err := dec.Decode(&skip); err != nil {
-			return ""
-		}
-	}
-	return ""
 }
