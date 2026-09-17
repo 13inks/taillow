@@ -131,7 +131,7 @@ are.
 |---|---|
 | 400 | The body is not exactly `{"model", "prompt", "max_tokens"}`. The field is named. |
 | 403 | The tailnet does not know the caller, grants them nothing for this app, or does not grant this model. |
-| 422 | The model declined the request. Providers report this as a success with no text; taillow does not pass that on as a 200. |
+| 422 | The model declined the request, or returned no text at all (a reasoning model can spend all of `max_tokens` thinking). Providers report both as a success; taillow does not pass that on as a 200. |
 | 429 | Today's token budget cannot cover this request. Says whose budget, the limit, and the reset time. |
 | 500 | The audit line could not be written, so the answer was withheld. |
 | 502 | The upstream failed. Carries the provider and its own status. |
@@ -191,8 +191,11 @@ DECISIONS.md          every choice someone could reasonably have made differentl
 
 Every path above is covered by tests that fake the tailnet's `WhoIs` and the two
 providers; the Anthropic tests run the real SDK against a local fake of the
-Messages API. The node has joined a real tailnet. The full request path has not
-yet been exercised end to end on one, and this README will say so until it has.
+Messages API. The Ollama client has been checked against a real Ollama, which is
+how the empty-answer refusal got written (`TAILLOW_LIVE_OLLAMA=<model> go test
+./internal/upstream -run Live -v` repeats that check). The node has joined a real tailnet.
+The full request path has not yet been exercised end to end on one, and this
+README will say so until it has.
 
 ## How this was built
 

@@ -141,6 +141,19 @@ grant never named, which is the one thing this gateway exists to prevent.
 request as a success with no text. Passing that through would be the silent
 success this project is named against.
 
+**An answer with no text is a 422 too.** Found by pointing the Ollama client at
+a real server: a reasoning model given `max_tokens: 64` spent all 64 tokens on
+its hidden thinking channel and returned an empty answer with a 200. The tokens
+are charged, because they were generated, and the refusal carries the stop
+reason so the caller knows to raise `max_tokens`.
+
+**Ollama is asked not to think.** taillow returns only the answer, so thinking
+tokens are cost the caller pays and never sees. The request sets `think: false`
+explicitly; leaving it out means "model default", which for a reasoning model
+is on. Ollama accepts the flag for models that cannot think (checked against
+one). Anthropic models think or not by their own defaults, which is why the
+empty-answer check above exists for both providers.
+
 **Token counts are the upstream's.** taillow never counts tokens itself. All
 three of Anthropic's input counters (uncached, cache write, cache read) are
 summed, because all three are billed.

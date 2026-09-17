@@ -28,6 +28,7 @@ func (o *Ollama) Complete(ctx context.Context, req Request) (Response, error) {
 		Model    string          `json:"model"`
 		Messages []ollamaMessage `json:"messages"`
 		Stream   bool            `json:"stream"`
+		Think    bool            `json:"think"`
 		Options  ollamaOptions   `json:"options"`
 	}{
 		Model: req.Model,
@@ -35,6 +36,12 @@ func (o *Ollama) Complete(ctx context.Context, req Request) (Response, error) {
 			{Role: "user", Content: req.Prompt},
 		},
 		Stream: false,
+		// Reasoning models spend num_predict on a hidden thinking channel
+		// first. taillow returns only the answer, so that thinking is pure
+		// cost to the caller: measured against a local Ollama, a 64-token
+		// request came back as 64 thinking tokens and no text at all.
+		// Ollama accepts think=false for models that cannot think.
+		Think: false,
 		Options: ollamaOptions{
 			NumPredict: req.MaxTokens,
 		},

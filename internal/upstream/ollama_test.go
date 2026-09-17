@@ -36,6 +36,12 @@ func TestOllamaComplete(t *testing.T) {
 	}
 	msgs, _ := gotBody["messages"].([]any)
 	opts, _ := gotBody["options"].(map[string]any)
+	// think must be present and false, not merely absent: absent means "model
+	// default", and a reasoning model's default spends the token budget on
+	// thinking the caller never sees.
+	if think, ok := gotBody["think"]; !ok || think != false {
+		t.Errorf("think = %v (present %v), want an explicit false", think, ok)
+	}
 	if gotBody["model"] != "qwen3:8b" || gotBody["stream"] != false || len(msgs) != 1 || opts["num_predict"] != float64(64) {
 		t.Fatalf("body = %v", gotBody)
 	}

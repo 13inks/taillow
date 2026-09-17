@@ -228,7 +228,7 @@ func TestCompleteAllowed(t *testing.T) {
 }
 
 func TestCompleteTaggedNodeIsBudgetedAsItsTags(t *testing.T) {
-	h := newHarness(upstream.Response{InputTokens: 1, OutputTokens: 1, StopReason: "end_turn"}, nil)
+	h := newHarness(upstream.Response{Text: "ok", InputTokens: 1, OutputTokens: 1, StopReason: "end_turn"}, nil)
 	if rec, _ := h.post(t, addrCI, okRequest); rec.Code != http.StatusOK {
 		t.Fatalf("status = %d: %s", rec.Code, rec.Body)
 	}
@@ -249,7 +249,7 @@ func TestCompleteBudgetExhausted(t *testing.T) {
 	h := newHarness(upstream.Response{}, nil)
 	// 900 + len("hello") + 64 = 969 fits in 1000 once, not twice.
 	big := `{"model":"claude-opus-5","prompt":"hello","max_tokens":900}`
-	h.provider.resp = upstream.Response{InputTokens: 400, OutputTokens: 500, StopReason: "end_turn"}
+	h.provider.resp = upstream.Response{Text: "ok", InputTokens: 400, OutputTokens: 500, StopReason: "end_turn"}
 	if rec, _ := h.post(t, addrAlice, big); rec.Code != http.StatusOK {
 		t.Fatalf("first request: status = %d: %s", rec.Code, rec.Body)
 	}
@@ -314,6 +314,29 @@ func TestCompleteModelRefusalIsNotASilentSuccess(t *testing.T) {
 	}
 	if e := h.lastAudit(t, 1); e.Decision != "model_refused" || e.InputTokens != 12 || e.OutputTokens != 3 {
 		t.Errorf("audit = %+v", e)
+	}
+}
+
+// Measured against a real Ollama: a thinking model given 64 tokens returned 64
+// thinking tokens, no text, and a 200.
+func TestCompleteEmptyAnswerIsNotASilentSuccess(t *testing.T) {
+	for _, text := range []string{"", "  \n"} {
+		h := newHarness(upstream.Response{Text: text, InputTokens: 16, OutputTokens: 64, StopReason: "length"}, nil)
+		rec, got := h.post(t, addrAlice, okRequest)
+
+		if rec.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("text %q: status = %d, want 422: %s", text, rec.Code, rec.Body)
+		}
+		if !strings.Contains(got.Reason, "no text") || !strings.Contains(got.Reason, "length") {
+			t.Errorf("reason = %q, want it to say there was no text and why the model stopped", got.Reason)
+		}
+		// The tokens were generated and billed, so they are charged.
+		if used := h.gw.ledger.Used("alice@example.com"); used != 80 {
+			t.Errorf("ledger = %d, want 80", used)
+		}
+		if e := h.lastAudit(t, 1); e.Decision != "empty_answer" || e.OutputTokens != 64 {
+			t.Errorf("audit = %+v", e)
+		}
 	}
 }
 

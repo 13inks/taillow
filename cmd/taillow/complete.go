@@ -216,6 +216,15 @@ func (g *gateway) completeHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The same goes for an answer with no text in it. A reasoning model can
+	// spend all of max_tokens thinking and return nothing, and a 200 with an
+	// empty text field looks like success to anything checking the status.
+	if strings.TrimSpace(resp.Text) == "" {
+		refuse(http.StatusUnprocessableEntity, "empty_answer",
+			fmt.Sprintf("the model returned no text (stop reason: %s); if it stopped for length, raise max_tokens", resp.StopReason), nil)
+		return
+	}
+
 	entry.Decision = "allowed"
 	g.finish(w, entry, http.StatusOK, completeResponse{
 		Model:           req.Model,
