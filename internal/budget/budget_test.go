@@ -166,3 +166,72 @@ func TestLedger(t *testing.T) {
 		}
 	})
 }
+
+func TestSettle(t *testing.T) {
+	const id, limit = "alice@example.com", int64(1000)
+	reserve := func(t *testing.T, l *Ledger, tokens int64) time.Time {
+		t.Helper()
+		_, resetAt, err := l.Spend(id, tokens, limit)
+		if err != nil {
+			t.Fatalf("Spend(%d) err = %v, want nil", tokens, err)
+		}
+		return resetAt
+	}
+
+	t.Run("refunds the unused part of a reservation", func(t *testing.T) {
+		l := New((&clock{t: noon}).now)
+		resetAt := reserve(t, l, 600)
+		l.Settle(id, resetAt, 600, 150)
+		if got := l.Used(id); got != 150 {
+			t.Errorf("Used = %d, want 150", got)
+		}
+		// The refund is spendable again: 850 fits only if 450 came back.
+		if _, _, err := l.Spend(id, 850, limit); err != nil {
+			t.Errorf("Spend(850) after refund err = %v, want nil", err)
+		}
+	})
+
+	t.Run("records an overrun even past the limit", func(t *testing.T) {
+		l := New((&clock{t: noon}).now)
+		resetAt := reserve(t, l, 900)
+		l.Settle(id, resetAt, 900, 1200)
+		if got := l.Used(id); got != 1200 {
+			t.Errorf("Used = %d, want 1200", got)
+		}
+		if _, _, err := l.Spend(id, 1, limit); !errors.Is(err, ErrExhausted) {
+			t.Errorf("Spend(1) after overrun err = %v, want ErrExhausted", err)
+		}
+	})
+
+	t.Run("leaves a finished day alone", func(t *testing.T) {
+		c := &clock{t: noon}
+		l := New(c.now)
+		resetAt := reserve(t, l, 600)
+		c.set(midnight.Add(time.Minute))
+		reserve(t, l, 100) // today's spend, which yesterday's settle must not touch
+		l.Settle(id, resetAt, 600, 150)
+		if got := l.Used(id); got != 100 {
+			t.Errorf("Used = %d, want 100", got)
+		}
+	})
+
+	t.Run("ignores input it cannot mean anything by", func(t *testing.T) {
+		l := New((&clock{t: noon}).now)
+		resetAt := reserve(t, l, 600)
+		l.Settle("", resetAt, 600, 0)
+		l.Settle(id, resetAt, 0, 0)
+		l.Settle(id, resetAt, 600, -1)
+		if got := l.Used(id); got != 600 {
+			t.Errorf("Used = %d, want 600", got)
+		}
+	})
+
+	t.Run("never drives the total below zero", func(t *testing.T) {
+		l := New((&clock{t: noon}).now)
+		resetAt := reserve(t, l, 100)
+		l.Settle(id, resetAt, 500, 0) // claims more than was ever reserved
+		if got := l.Used(id); got != 0 {
+			t.Errorf("Used = %d, want 0", got)
+		}
+	})
+}

@@ -56,6 +56,34 @@ func (l *Ledger) Spend(identity string, tokens, limit int64) (remaining int64, r
 	return limit - used, resetAt, nil
 }
 
+// Settle corrects a reservation made by Spend to what the request really cost.
+// reserved is what Spend recorded, actual is what the upstream reported, and
+// resetAt is the value Spend returned, which names the day the reservation
+// belongs to.
+//
+// Reserving first and settling after is what keeps concurrent requests inside
+// the limit: charging only after the call would let ten requests all pass the
+// check before any of them is counted.
+//
+// A reservation from a day that has ended is left alone: that day's total no
+// longer counts against anyone. Settle never refuses. If actual is larger than
+// reserved the difference is recorded even past the limit, because the tokens
+// were spent and the ledger records what happened.
+func (l *Ledger) Settle(identity string, resetAt time.Time, reserved, actual int64) {
+	if identity == "" || reserved <= 0 || actual < 0 {
+		return
+	}
+	day := startOfDay(l.now())
+	if !resetAt.Equal(day.AddDate(0, 0, 1)) {
+		return
+	}
+
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	used := l.usedLocked(identity, day) - reserved + actual
+	l.spent[identity] = dayTotal{day: day, total: max(0, used)}
+}
+
 // Used returns the tokens identity has spent in the current UTC day.
 func (l *Ledger) Used(identity string) int64 {
 	day := startOfDay(l.now())
